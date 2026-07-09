@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en-us">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Feed & Grow: Fish</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:100%;height:100%;background:#0d0d0d;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;color:#e0e0e0}
+#unityContainer{width:100%;height:100%;position:absolute;top:0;left:0}
+#loadingOverlay{position:fixed;top:0;left:0;width:100%;height:100%;background:#0d0d0d;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:1000;transition:opacity .5s}
+#loadingOverlay.hidden{opacity:0;pointer-events:none}
+#loadingTitle{font-size:26px;font-weight:700;margin-bottom:36px;letter-spacing:.5px}
+#loadingBarBg{width:200px;height:2px;background:#222;overflow:hidden}
+#loadingBarFill{height:100%;width:0%;background:#666;transition:width .3s ease}
+#loadingText{color:#888;font-size:13px;margin-top:14px;letter-spacing:.3px}
+</style>
+</head>
+<body>
+<div id="loadingOverlay">
+<div id="loadingTitle">Feed & Grow: Fish</div>
+<div id="loadingBarBg"><div id="loadingBarFill"></div></div>
+<div id="loadingText">Loading assets... 0%</div>
+</div>
+<div id="unityContainer"></div>
+
+<script>
+(function(){
+var BASE='https://cdn.jsdelivr.net/gh/reeyuki/FeedAndGrowFishPort@main/Build/'
+var assets=[
+{name:'web.data.unityweb',prefix:'web.data',chunks:15},
+{name:'web.wasm.code.unityweb',prefix:'web.code',chunks:3},
+{name:'web.wasm.framework.unityweb'},
+{name:'web.json',text:true}
+]
+var responseMap={}
+var totalItems=0
+assets.forEach(function(a){totalItems+=a.chunks||1})
+var loadedItems=0
+var loadingBar=document.getElementById('loadingBarFill')
+var loadingText=document.getElementById('loadingText')
+function pad(n){return n<10?'0'+n:''+n}
+function updateProgress(label){
+var pct=Math.round(loadedItems/totalItems*100)
+loadingBar.style.width=pct+'%'
+loadingText.textContent=label+' '+pct+'%'
+}
+function bufToString(buf){
+if(typeof TextDecoder!=='undefined')
+return new TextDecoder('utf-8').decode(buf)
+var s='',v=new Uint8Array(buf)
+for(var i=0;i<v.length;i++)s+=String.fromCharCode(v[i])
+return s
+}
+var promises=[]
+assets.forEach(function(asset){
+if(asset.chunks){
+var chunkPromises=[]
+for(var i=0;i<asset.chunks;i++){
+var url=BASE+asset.prefix+pad(i)
+;(function(u){
+chunkPromises.push(
+fetch(u).then(function(r){
+if(!r.ok)throw new Error('Fetch failed: '+u)
+loadedItems++
+updateProgress('Downloading assets...')
+return r.arrayBuffer()
+})
+)
+})(url)
+}
+promises.push(
+Promise.all(chunkPromises).then(function(buffers){
+var totalLen=0
+for(var i=0;i<buffers.length;i++)totalLen+=buffers[i].byteLength
+var merged=new Uint8Array(totalLen)
+var offset=0
+for(var i=0;i<buffers.length;i++){
+merged.set(new Uint8Array(buffers[i]),offset)
+offset+=buffers[i].byteLength
+}
+responseMap[BASE+asset.name]=merged.buffer
+})
+)
+}else if(asset.text){
+var url=BASE+asset.name
+promises.push(
+fetch(url).then(function(r){
+if(!r.ok)throw new Error('Fetch failed: '+url)
+loadedItems++
+updateProgress('Downloading assets...')
+return r.text()
+}).then(function(text){
+responseMap[url]=text
+})
+)
+}else{
+var url=BASE+asset.name
+promises.push(
+fetch(url).then(function(r){
+if(!r.ok)throw new Error('Fetch failed: '+url)
+loadedItems++
+updateProgress('Downloading assets...')
+return r.arrayBuffer()
+}).then(function(buf){
+responseMap[url]=buf
+})
+)
+}
+})
+Promise.all(promises).then(function(){
+loadingText.textContent='Initializing...'
+var origFetch=window.fetch
+window.fetch=function(input,init){
+var url=typeof input==='string'?input:input?input.url:''
+var clean=url.split('?')[0].split('#')[0]
+if(responseMap[clean]!==undefined){
+var data=responseMap[clean]
+      if(typeof data==='string')
+        return Promise.resolve(new Response(data,{headers:{'content-type':'application/json'}}))
+      return Promise.resolve(new Response(new Blob([data],{type:'application/octet-stream'})))
+}
+return origFetch.call(this,input,init)
+}
+var OrigXHR=window.XMLHttpRequest
+function PatchedXHR(){
+var xhr=new OrigXHR()
+var _url=''
+var _method='GET'
+var _async=true
+var origOpen=xhr.open.bind(xhr)
+var origSend=xhr.send.bind(xhr)
+xhr.open=function(method,url){
+_url=(typeof url==='string'?url:url?''+url:'').split('?')[0].split('#')[0]
+_method=method
+_async=arguments.length<3||arguments[2]!==false
+if(responseMap[_url]!==undefined){
+Object.defineProperty(xhr,'readyState',{value:1,configurable:true,writable:true})
+}else{
+origOpen(method,url,arguments[2])
+}
+}
+function respond(data){
+Object.defineProperties(xhr,{
+readyState:{value:4,configurable:true,writable:true},
+status:{value:200,configurable:true,writable:true},
+statusText:{value:'OK',configurable:true,writable:true}
+})
+if(typeof data==='string'){
+Object.defineProperties(xhr,{
+responseText:{value:data,configurable:true,writable:true},
+response:{value:data,configurable:true,writable:true}
+})
+}else{
+var rt=xhr.responseType||''
+if(rt==='blob'){
+Object.defineProperty(xhr,'response',{value:new Blob([data]),configurable:true,writable:true})
+}else{
+Object.defineProperty(xhr,'response',{value:data,configurable:true,writable:true})
+if(rt===''||rt==='text')
+Object.defineProperty(xhr,'responseText',{value:bufToString(data),configurable:true,writable:true})
+}
+}
+if(!_async){
+var e1=new Event('readystatechange')
+var e2=new Event('load')
+xhr.dispatchEvent(e1)
+xhr.dispatchEvent(e2)
+}else{
+setTimeout(function(){
+xhr.dispatchEvent(new Event('readystatechange'))
+xhr.dispatchEvent(new Event('load'))
+},0)
+}
+}
+xhr.send=function(body){
+if(_url&&responseMap[_url]!==undefined){
+respond(responseMap[_url])
+return
+}
+return origSend(body)
+}
+var origSetReqHeader=xhr.setRequestHeader.bind(xhr)
+xhr.setRequestHeader=function(name,value){
+if(responseMap[_url]===undefined)origSetReqHeader(name,value)
+}
+var origOvrMime=xhr.overrideMimeType?xhr.overrideMimeType.bind(xhr):null
+xhr.overrideMimeType=function(mime){
+if(responseMap[_url]===undefined&&origOvrMime)origOvrMime(mime)
+}
+var origGetRespHeader=xhr.getResponseHeader?xhr.getResponseHeader.bind(xhr):null
+xhr.getResponseHeader=function(name){
+if(responseMap[_url]!==undefined)return null
+return origGetRespHeader?origGetRespHeader(name):null
+}
+var origGetAllRespHeaders=xhr.getAllResponseHeaders?xhr.getAllResponseHeaders.bind(xhr):null
+xhr.getAllResponseHeaders=function(){
+if(responseMap[_url]!==undefined)return''
+return origGetAllRespHeaders?origGetAllRespHeaders():''
+}
+var origAdd=xhr.addEventListener?xhr.addEventListener.bind(xhr):null
+xhr.addEventListener=function(type,handler,capture){
+if(origAdd)origAdd(type,handler,capture)
+}
+return xhr
+}
+PatchedXHR.prototype=OrigXHR.prototype
+window.XMLHttpRequest=PatchedXHR
+var script=document.createElement('script')
+script.src=BASE+'UnityLoader.js'
+script.onload=function(){
+UnityLoader.instantiate('unityContainer',BASE+'web.json',{
+onProgress:function(instance,progress){
+if(progress===1)
+document.getElementById('loadingOverlay').classList.add('hidden')
+}
+})
+}
+script.onerror=function(){loadingText.textContent='Failed to load Unity loader'}
+document.body.appendChild(script)
+}).catch(function(err){
+loadingText.textContent='Failed: '+err.message
+})
+document.title='Feed & Grow: Fish'
+})()
+</script>
+</body>
+</html>
